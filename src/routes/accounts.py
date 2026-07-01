@@ -19,7 +19,6 @@ from database import (
 )
 from exceptions import BaseSecurityError
 from security.interfaces import JWTAuthManagerInterface
-from security.passwords import hash_password, verify_password
 
 from schemas.accounts import (
     UserRegistrationRequestSchema,
@@ -59,11 +58,9 @@ async def register_user(
     user_group = result.scalars().first()
 
     try:
-        hashed_password = hash_password(user_data.password)
-
-        new_user = UserModel(
+        new_user = UserModel.create(
             email=user_data.email,
-            hashed_password=hashed_password,
+            raw_password=user_data.password,
             group_id=cast(int, user_group.id),
         )
         db.add(new_user)
@@ -73,7 +70,7 @@ async def register_user(
 
         await db.commit()
         await db.refresh(new_user)
-    except (SQLAlchemyError, BaseSecurityError):
+    except (SQLAlchemyError, BaseSecurityError, ValueError):
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -182,10 +179,10 @@ async def complete_password_reset(
         )
 
     try:
-        user.hashed_password = hash_password(reset_data.password)
+        user.password = reset_data.password
         await db.delete(token_record)
         await db.commit()
-    except (SQLAlchemyError, BaseSecurityError):
+    except (SQLAlchemyError, BaseSecurityError, ValueError):
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -213,7 +210,7 @@ async def login_user(
     password_valid = False
     if user:
         try:
-            password_valid = verify_password(login_data.password, user.hashed_password)
+            password_valid = user.verify_password(login_data.password)
         except BaseSecurityError:
             password_valid = False
 
